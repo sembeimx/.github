@@ -1,0 +1,183 @@
+name: Deploy to Sembei Platform
+
+# Reusable workflow: builds a Docker image, pushes to Artifact Registry,
+# and deploys to a Sembei platform VM (staging or production) via IAP SSH.
+#
+# Security model:
+#   - Auth via Workload Identity Federation (no long-lived SA keys)
+#   - Each caller MUST declare `environment: <staging|production>` — WIF binding
+#     scopes by `repository:environment` so a workflow without environment can't auth
+#   - The calling repo provides project-specific inputs; secrets/config never leave GCP
+#
+# Usage (from a project repo, e.g. sembeimx/hablemos-de-azucar):
+#
+#   jobs:
+#     deploy:
+#       uses: sembeimx/.github/.github/workflows/deploy.yml@main
+#       with:
+#         project_name: hda
+#         environment: staging
+#         vm_name: sembei-staging-vm
+#         vm_path: /opt/hablemosdeazucar/app
+#         image_repository: us-central1-docker.pkg.dev/sembei-websites/nori/hda
+#         service_account: github-hda-staging-deploy@sembei-websites.iam.gserviceaccount.com
+#         workload_identity_provider: projects/450896011520/locations/global/workloadIdentityPools/github-actions/providers/github
+#         health_check_host: hda-staging.sembei.mx
+
+on:
+  workflow_call:
+    inputs:
+      project_name:
+        required: true
+        type: string
+        description: "Project slug (hda, sembei, ocampo, etc.) — used for concurrency grouping"
+      environment:
+        required: true
+        type: string
+        description: "Target environment: 'staging' or 'production'"
+      vm_name:
+        required: true
+        type: string
+        description: "GCE VM name (sembei-staging-vm or sembei-vm)"
+      vm_zone:
+        type: string
+        default: "us-central1-a"
+      gcp_project:
+        type: string
+        default: "sembei-websites"
+      vm_path:
+        required: true
+        type: string
+        description: "Path on VM where the project's compose files live (e.g., /opt/hablemosdeazucar/app)"
+      image_repository:
+        required: true
+        type: string
+        description: "Full Artifact Registry path WITHOUT tag (e.g., us-central1-docker.pkg.dev/sembei-websites/nori/hda)"
+      service_account:
+        required: true
+        type: string
+        description: "GCP SA email to impersonate via WIF"
+      workload_identity_provider:
+        required: true
+        type: string
+        description: "Full WIF provider resource path"
+      run_migrations:
+        type: boolean
+        default: true
+        description: "Whether to run migrations before bringing up containers"
+      migrate_command:
+        type: string
+        default: "python nori.py migrate:upgrade"
+        description: "Command to run inside the app container for migrations"
+      health_check_path:
+        type: string
+        default: "/health"
+        description: "URL path to verify after deploy (returns 2xx)"
+      health_check_host:
+        type: string
+        default: ""
+        description: "Hostname for health check (e.g., hda-staging.sembei.mx). Empty = skip check"
+
+jobs:
+  deploy:
+    name: Build & Deploy ${{ inputs.project_name }} → ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: deploy-${{ inputs.project_name }}-${{ inputs.environment }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (WIF)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.workload_identity_provider }}
+          service_account: ${{ inputs.service_account }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ inputs.image_repository }}:${{ inputs.environment }}
+            ${{ inputs.image_repository }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy to VM via IAP
+        env:
+          VM_PATH: ${{ inputs.vm_path }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          RUN_MIGRATIONS: ${{ inputs.run_migrations }}
+          MIGRATE_CMD: ${{ inputs.migrate_command }}
+        run: |
+          REMOTE_SCRIPT=$(cat <<EOF
+          set -e
+          cd "$VM_PATH"
+          echo "→ Pulling repo for compose file updates"
+          git pull --ff-only
+          COMPOSE="docker-compose.$ENVIRONMENT.yml"
+          echo "→ Pulling new image from Artifact Registry"
+          docker compose -f "\$COMPOSE" pull
+          if [ "$RUN_MIGRATIONS" = "true" ]; then
+            echo "→ Running migrations"
+            docker compose -f "\$COMPOSE" run --rm app $MIGRATE_CMD
+          fi
+          echo "→ Bringing up new container"
+          docker compose -f "\$COMPOSE" up -d
+          echo "→ Final state:"
+          docker compose -f "\$COMPOSE" ps
+          EOF
+          )
+
+          gcloud compute ssh "${{ inputs.vm_name }}" \
+            --zone="${{ inputs.vm_zone }}" \
+            --project="${{ inputs.gcp_project }}" \
+            --tunnel-through-iap \
+            --command="$REMOTE_SCRIPT"
+
+      - name: Health check
+        if: inputs.health_check_host != ''
+        run: |
+          URL="https://${{ inputs.health_check_host }}${{ inputs.health_check_path }}"
+          echo "Probing $URL (up to 60s)"
+          for i in $(seq 1 12); do
+            if curl -fsS -m 10 "$URL" > /tmp/health.out 2>&1; then
+              echo "✓ Health check passed on attempt $i"
+              cat /tmp/health.out
+              exit 0
+            fi
+            echo "  attempt $i: not ready yet, retrying in 5s"
+            sleep 5
+          done
+          echo "✗ Health check failed after 60s"
+          exit 1
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Project**: ${{ inputs.project_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **VM**: ${{ inputs.vm_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: ${{ inputs.image_repository }}:sha-${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
