@@ -193,10 +193,10 @@ gcloud artifacts repositories add-iam-policy-binding nori \
   --member="serviceAccount:sembei-staging-vm-sa@sembei-websites.iam.gserviceaccount.com" \
   --role="roles/artifactregistry.reader" --project=sembei-websites
 
-# Prod-vm SA (sembei-prod-vm@…)
+# Prod-vm SA (note: SA name kept the old `sembei-vm@…` even after VM rename to sembei-prod-vm)
 gcloud artifacts repositories add-iam-policy-binding nori \
   --location=us-central1 \
-  --member="serviceAccount:sembei-prod-vm@sembei-websites.iam.gserviceaccount.com" \
+  --member="serviceAccount:sembei-vm@sembei-websites.iam.gserviceaccount.com" \
   --role="roles/artifactregistry.reader" --project=sembei-websites
 ```
 
