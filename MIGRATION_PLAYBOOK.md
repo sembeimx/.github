@@ -28,7 +28,7 @@ Replace `<project>` (e.g. `sembei`, `ocampo`) and `<client-domain>` (e.g. `clien
 gcloud sql databases create <project>_staging --instance=sembei-mysql --project=sembei-websites
 gcloud sql databases create <project>_production --instance=sembei-mysql --project=sembei-websites
 
-# Create users with passwords from 1P (vault Administracion → item "Stagings" for staging;
+# Create users with passwords from 1P (vault Sembei → item "Stagings" for staging;
 # create vault item "<PROJECT> — Production (Cloud SQL + .env)" for prod)
 gcloud sql users create <project>_staging --host='%' --instance=sembei-mysql --password=<from-1P>
 gcloud sql users create <project>_user_prod --host='%' --instance=sembei-mysql --password=<from-1P>
