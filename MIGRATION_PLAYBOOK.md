@@ -11,7 +11,7 @@ This document is the operational complement to [`.github/workflows/deploy.yml`](
 - ✅ Workload Identity Pool `github-actions` in GCP project `sembei-websites`
 - ✅ OIDC Provider `github` with `repository_owner == 'sembeimx'` condition
 - ✅ Artifact Registry `nori` repo (`us-central1-docker.pkg.dev/sembei-websites/nori`)
-- ✅ `sembei-staging-vm` and `sembei-vm` (prod) provisioned with Docker + Caddy + Redis
+- ✅ `sembei-staging-vm` and `sembei-prod-vm` (prod) provisioned with Docker + Caddy + Redis
 - ✅ Cloud SQL `sembei-mysql` (shared instance)
 - ✅ Reusable workflow at `sembeimx/.github/.github/workflows/deploy.yml@main`
 
@@ -99,7 +99,7 @@ gcloud compute instances add-iam-policy-binding sembei-staging-vm \
   --role="roles/compute.osAdminLogin" \
   --project=sembei-websites
 
-gcloud compute instances add-iam-policy-binding sembei-vm \
+gcloud compute instances add-iam-policy-binding sembei-prod-vm \
   --zone=us-central1-a \
   --member="serviceAccount:github-<project>-prod-deploy@sembei-websites.iam.gserviceaccount.com" \
   --role="roles/compute.osAdminLogin" \
@@ -111,7 +111,7 @@ gcloud iam service-accounts add-iam-policy-binding sembei-staging-vm-sa@sembei-w
   --role="roles/iam.serviceAccountUser" \
   --project=sembei-websites
 
-gcloud iam service-accounts add-iam-policy-binding sembei-vm@sembei-websites.iam.gserviceaccount.com \
+gcloud iam service-accounts add-iam-policy-binding sembei-prod-vm@sembei-websites.iam.gserviceaccount.com \
   --member="serviceAccount:github-<project>-prod-deploy@sembei-websites.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountUser" \
   --project=sembei-websites
@@ -135,7 +135,7 @@ gcloud dns record-sets create <project>-staging.sembei.mx. \
   --zone=sembei-mx --project=sembei-1753378396720 \
   --type=A --ttl=300 --rrdatas=34.173.239.53
 
-# Production (if migrating client domain, point A record to sembei-vm)
+# Production (if migrating client domain, point A record to sembei-prod-vm)
 gcloud dns record-sets create <client-domain>. \
   --zone=<client-domain-zone> --project=sembei-1753378396720 \
   --type=A --ttl=300 --rrdatas=35.222.32.133
@@ -143,7 +143,7 @@ gcloud dns record-sets create <client-domain>. \
 
 ### 4. Provision repo on each VM
 
-For each VM (`sembei-staging-vm` for staging container, `sembei-vm` for prod container):
+For each VM (`sembei-staging-vm` for staging container, `sembei-prod-vm` for prod container):
 
 ```bash
 gcloud compute ssh <vm-name> --zone=us-central1-a --project=sembei-websites --tunnel-through-iap
@@ -193,10 +193,10 @@ gcloud artifacts repositories add-iam-policy-binding nori \
   --member="serviceAccount:sembei-staging-vm-sa@sembei-websites.iam.gserviceaccount.com" \
   --role="roles/artifactregistry.reader" --project=sembei-websites
 
-# Prod-vm SA (sembei-vm@…)
+# Prod-vm SA (sembei-prod-vm@…)
 gcloud artifacts repositories add-iam-policy-binding nori \
   --location=us-central1 \
-  --member="serviceAccount:sembei-vm@sembei-websites.iam.gserviceaccount.com" \
+  --member="serviceAccount:sembei-prod-vm@sembei-websites.iam.gserviceaccount.com" \
   --role="roles/artifactregistry.reader" --project=sembei-websites
 ```
 
@@ -217,7 +217,7 @@ Edit `/opt/sembei/caddy/Caddyfile` on each VM and add:
 	encode gzip zstd
 }
 
-# On sembei-vm — no basic_auth (public production)
+# On sembei-prod-vm — no basic_auth (public production)
 <client-domain> {
 	reverse_proxy <project>-production:8000
 	encode gzip zstd
@@ -290,7 +290,7 @@ jobs:
       health_check_host: <project>-staging.sembei.mx
 ```
 
-`deploy-production.yml`: same structure, swap `staging` → `production`, `vm_name: sembei-vm`, and `health_check_host: <client-domain>`.
+`deploy-production.yml`: same structure, swap `staging` → `production`, `vm_name: sembei-prod-vm`, and `health_check_host: <client-domain>`.
 
 ### 10. Initial deploy
 
@@ -331,6 +331,6 @@ After verification:
 - [ ] `https://<project>-staging.sembei.mx/health` returns 200 OK
 - [ ] `git tag vX.Y.Z && git push origin vX.Y.Z` triggers production deploy successfully
 - [ ] `https://<client-domain>/health` returns 200 OK
-- [ ] Old containers removed from sembei-vm
+- [ ] Old containers removed from sembei-prod-vm
 - [ ] Old DNS records (if any) redirect or cleaned up
 - [ ] README of project documents the new flow with environment URLs
