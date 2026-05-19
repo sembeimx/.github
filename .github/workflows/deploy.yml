@@ -129,22 +129,25 @@ jobs:
           RUN_MIGRATIONS: ${{ inputs.run_migrations }}
           MIGRATE_CMD: ${{ inputs.migrate_command }}
         run: |
+          # All commands run as 'sembei' (which owns the repo + has docker access).
+          # The SSH user is the auto-generated OS Login user from the SA; we need
+          # to sudo to sembei to operate on /opt/<project>/app and docker.
           REMOTE_SCRIPT=$(cat <<EOF
           set -e
           cd "$VM_PATH"
           echo "→ Pulling repo for compose file updates"
-          git pull --ff-only
+          sudo -u sembei git pull --ff-only
           COMPOSE="docker-compose.$ENVIRONMENT.yml"
           echo "→ Pulling new image from Artifact Registry"
-          docker compose -f "\$COMPOSE" pull
+          sudo -u sembei docker compose -f "\$COMPOSE" pull
           if [ "$RUN_MIGRATIONS" = "true" ]; then
             echo "→ Running migrations"
-            docker compose -f "\$COMPOSE" run --rm app $MIGRATE_CMD
+            sudo -u sembei docker compose -f "\$COMPOSE" run --rm app $MIGRATE_CMD
           fi
           echo "→ Bringing up new container"
-          docker compose -f "\$COMPOSE" up -d
+          sudo -u sembei docker compose -f "\$COMPOSE" up -d
           echo "→ Final state:"
-          docker compose -f "\$COMPOSE" ps
+          sudo -u sembei docker compose -f "\$COMPOSE" ps
           EOF
           )
 
