@@ -111,7 +111,7 @@ gcloud iam service-accounts add-iam-policy-binding sembei-staging-vm-sa@sembei-w
   --role="roles/iam.serviceAccountUser" \
   --project=sembei-websites
 
-gcloud iam service-accounts add-iam-policy-binding sembei-prod-vm@sembei-websites.iam.gserviceaccount.com \
+gcloud iam service-accounts add-iam-policy-binding sembei-vm@sembei-websites.iam.gserviceaccount.com \
   --member="serviceAccount:github-<project>-prod-deploy@sembei-websites.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountUser" \
   --project=sembei-websites
