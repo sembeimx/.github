@@ -83,6 +83,12 @@ jobs:
     name: Build & Deploy ${{ inputs.project_name }} → ${{ inputs.environment }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    # Force Node 24 runtime for actions still shipping Node 20 binaries
+    # (actions/checkout@v4, docker/*, google-github-actions/*). GitHub forces
+    # Node 24 by default starting 2026-06-02; opting in early eliminates the
+    # deprecation warning that fires on every deploy across the platform.
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     permissions:
       contents: read
       id-token: write
