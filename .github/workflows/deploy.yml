@@ -152,6 +152,11 @@ jobs:
           fi
           echo "→ Bringing up new container"
           sudo -u sembei docker compose -f "\$COMPOSE" up -d
+          echo "→ Reclaiming disk: removing dangling images left by previous deploys"
+          # Safe on the shared VM: prune -f only removes untagged (<none>) images.
+          # Each site's running container keeps its :staging/:production image
+          # referenced, so only orphaned layers from prior deploys are removed.
+          sudo -u sembei docker image prune -f
           echo "→ Final state:"
           sudo -u sembei docker compose -f "\$COMPOSE" ps
           EOF
